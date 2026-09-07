@@ -4,7 +4,7 @@ import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
 
-import com.namangarg.androiddocumentscannerandfilter.Helper.Clahe;
+import com.namangarg.androiddocumentscannerandfilter.Helper.DocumentImageProcessor;
 
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
@@ -25,18 +25,13 @@ public class ShadowRemovelFilter {
         void onComplete(Bitmap bitmap);
     }
 
-    public static void getShadowFilteredImage(Bitmap bit_map, final ShadowRemovelFilter.MyCallBack<Bitmap> callBack){
-
-        Clahe.getClaheImage(bit_map, new Clahe.CallBack<Bitmap>() {
+    public static void getShadowFilteredImage(final Bitmap bit_map, final ShadowRemovelFilter.MyCallBack<Bitmap> callBack){
+        Executor executor = Executors.newSingleThreadExecutor();
+        final Handler handler = new Handler(Looper.getMainLooper());
+        executor.execute(new Runnable() {
             @Override
-            public void onComplete(final Bitmap pre_processed) {
-                Executor executor = Executors.newSingleThreadExecutor();
-                final Handler handler = new Handler(Looper.getMainLooper());
-                executor.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        Mat srcArry = new Mat(pre_processed.getWidth(), pre_processed.getHeight(), CvType.CV_8UC1);
-                        Utils.bitmapToMat(pre_processed, srcArry);
+            public void run() {
+                        Mat srcArry = DocumentImageProcessor.prepare(bit_map);
 
                         Imgproc.cvtColor(srcArry, srcArry, Imgproc.COLOR_BGR2HSV);
 
@@ -72,12 +67,10 @@ public class ShadowRemovelFilter {
                         final Bitmap res_ult = Bitmap.createBitmap(srcArry.cols(),srcArry.rows(),Bitmap.Config.ARGB_8888);
                         Utils.matToBitmap(result_norm, res_ult);
 
-                        handler.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                callBack.onComplete(res_ult);
-                            }
-                        });
+                handler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        callBack.onComplete(res_ult);
                     }
                 });
             }

@@ -4,7 +4,7 @@ import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
 
-import com.namangarg.androiddocumentscannerandfilter.Helper.Contrast;
+import com.namangarg.androiddocumentscannerandfilter.Helper.DocumentImageProcessor;
 
 import org.opencv.android.Utils;
 import org.opencv.core.Core;
@@ -31,9 +31,7 @@ public class MagicFilter {
         executor.execute(new Runnable() {
             @Override
             public void run() {
-                Mat srcArry = new Mat(bitmap.getWidth(),bitmap.getHeight(), CvType.CV_8UC1);
-                Utils.bitmapToMat(bitmap, srcArry);
-                double contrast_value = Contrast.getContrastLevel(bitmap);
+                Mat srcArry = DocumentImageProcessor.prepare(bitmap);
 
                   if (srcArry.channels() >= 3) {
 
@@ -45,8 +43,7 @@ public class MagicFilter {
                     Core.extractChannel(srcArry, channel, 2);
 
                     // apply the CLAHE algorithm to the L channel
-                    CLAHE clahe = Imgproc.createCLAHE();
-                    clahe.setClipLimit(1);
+                    CLAHE clahe = Imgproc.createCLAHE(2.0, new org.opencv.core.Size(8, 8));
                     clahe.apply(channel, channel);
 
                     // Merge the color planes back into an HSV image
@@ -56,8 +53,7 @@ public class MagicFilter {
                     Core.extractChannel(srcArry, channel, 1);
 
                     // apply the CLAHE algorithm to the S channel
-                    CLAHE clahe2 = Imgproc.createCLAHE();
-                    clahe2.setClipLimit(1);
+                    CLAHE clahe2 = Imgproc.createCLAHE(1.5, new org.opencv.core.Size(8, 8));
                     clahe2.apply(channel, channel);
 
                     // Merge the color planes back into an HSV image
@@ -69,7 +65,6 @@ public class MagicFilter {
                     // Temporary Mat not reused, so release from memory.
                     channel.release();
                 }
-                srcArry.convertTo(srcArry, -1,contrast_value,29);
                 final Bitmap result = Bitmap.createBitmap(srcArry.cols(),srcArry.rows(),Bitmap.Config.ARGB_8888);
                 Utils.matToBitmap(srcArry, result);
                 srcArry.release();

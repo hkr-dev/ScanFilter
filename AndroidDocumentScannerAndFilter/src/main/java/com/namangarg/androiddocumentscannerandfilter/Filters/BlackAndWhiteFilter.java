@@ -4,6 +4,8 @@ import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
 
+import com.namangarg.androiddocumentscannerandfilter.Helper.DocumentImageProcessor;
+
 import org.opencv.android.Utils;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
@@ -29,11 +31,10 @@ public class BlackAndWhiteFilter{
         executor.execute(new Runnable() {
             @Override
             public void run() {
-                Mat mat = new Mat(bitmap.getWidth(),bitmap.getHeight(), CvType.CV_8UC1);
-                Utils.bitmapToMat(bitmap, mat);
-                Imgproc.cvtColor(mat, mat, Imgproc.COLOR_RGB2GRAY);
-                Imgproc.medianBlur(mat,mat,5);
-                Imgproc.adaptiveThreshold(mat, mat,255,Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,Imgproc.THRESH_BINARY,11,3);
+                Mat mat = DocumentImageProcessor.prepare(bitmap);
+                Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2GRAY);
+                Imgproc.GaussianBlur(mat, mat, new org.opencv.core.Size(3, 3), 0);
+                Imgproc.adaptiveThreshold(mat, mat,255,Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,Imgproc.THRESH_BINARY,31,7);
                 final Bitmap result = Bitmap.createBitmap(mat.cols(),mat.rows(),Bitmap.Config.ARGB_8888);
                 Utils.matToBitmap(mat, result);
                 mat.release();
