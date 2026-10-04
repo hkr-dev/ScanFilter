@@ -22,6 +22,11 @@ public final class DocumentImageProcessor {
     }
 
     public static Mat prepare(Bitmap bitmap) {
+        return prepare(bitmap, true, false);
+    }
+
+    public static Mat prepare(Bitmap bitmap, boolean geometricCorrection,
+                              boolean illuminationCorrection) {
         Mat source = new Mat();
         Utils.bitmapToMat(bitmap, source);
         if (source.channels() == 4) {
@@ -30,12 +35,155 @@ public final class DocumentImageProcessor {
             Imgproc.cvtColor(source, source, Imgproc.COLOR_GRAY2BGR);
         }
 
-        Mat corrected = correctPerspective(source);
+        Mat corrected = geometricCorrection ? correctPerspective(source) : source;
         if (corrected != source) {
             source.release();
         }
-        correctIllumination(corrected);
+        if (illuminationCorrection) {
+            correctIllumination(corrected);
+        }
         return corrected;
+    }
+
+    public static Mat smoothGrayscale(Bitmap bitmap, float intensity) {
+        intensity = clamp(intensity);
+        Mat source = prepare(bitmap, true, false);
+        Mat lab = new Mat();
+        Mat luminance = new Mat();
+        Mat background = new Mat();
+        Mat rawFloat = new Mat();
+        Mat backgroundFloat = new Mat();
+        Mat correctedFloat = new Mat();
+        Imgproc.cvtColor(source, lab, Imgproc.COLOR_BGR2Lab);
+        Core.extractChannel(lab, luminance, 0);
+        // A 12% window captures page-scale lighting gradients without washing out strokes.
+        int kernel = oddKernel(Math.min(source.cols(), source.rows()), 0.12);
+        Imgproc.GaussianBlur(luminance, background, new Size(kernel, kernel), 0);
+        luminance.convertTo(rawFloat, CvType.CV_32F);
+        background.convertTo(backgroundFloat, CvType.CV_32F);
+        Core.add(backgroundFloat, new Scalar(1.0), backgroundFloat);
+        Core.multiply(rawFloat, new Scalar(Core.mean(backgroundFloat).val[0]), correctedFloat);
+        Core.divide(correctedFloat, backgroundFloat, correctedFloat);
+        correctedFloat.convertTo(luminance, CvType.CV_8U);
+        Imgproc.createCLAHE(1.5 + intensity * 0.5, new Size(8, 8)).apply(luminance, luminance);
+        Mat result = new Mat();
+        Mat rawLuminance = extractLuminance(source);
+        Core.addWeighted(rawLuminance, 1.0 - intensity, luminance, intensity, 0, result);
+        rawLuminance.release();
+        release(source, lab, luminance, background, rawFloat, backgroundFloat, correctedFloat);
+        return result;
+    }
+
+    public static Mat magicColor(Bitmap bitmap, float backgroundWhiteness, float colorBoost) {
+        backgroundWhiteness = clamp(backgroundWhiteness);
+        colorBoost = clamp(colorBoost);
+        Mat source = prepare(bitmap, true, false);
+        Mat lab = new Mat();
+        Mat light = new Mat();
+        Mat background = new Mat();
+        Mat lightFloat = new Mat();
+        Mat backgroundFloat = new Mat();
+        Mat normalized = new Mat();
+        Imgproc.cvtColor(source, lab, Imgproc.COLOR_BGR2Lab);
+        Core.extractChannel(lab, light, 0);
+        // The local white point follows paper shading but remains much larger than text.
+        Imgproc.GaussianBlur(light, background,
+                new Size(oddKernel(Math.min(source.cols(), source.rows()), 0.10),
+                        oddKernel(Math.min(source.cols(), source.rows()), 0.10)), 0);
+        light.convertTo(lightFloat, CvType.CV_32F);
+        background.convertTo(backgroundFloat, CvType.CV_32F);
+        Core.max(backgroundFloat, new Scalar(1), backgroundFloat);
+        Core.multiply(lightFloat, new Scalar(255), normalized);
+        Core.divide(normalized, backgroundFloat, normalized);
+        normalized.convertTo(light, CvType.CV_8U);
+        Mat rawLight = new Mat();
+        Core.extractChannel(lab, rawLight, 0);
+        Core.addWeighted(rawLight, 1.0 - backgroundWhiteness, light, backgroundWhiteness, 0, light);
+        Core.insertChannel(light, lab, 0);
+        boostLabChannel(lab, 1, colorBoost);
+        boostLabChannel(lab, 2, colorBoost);
+        Imgproc.cvtColor(lab, source, Imgproc.COLOR_Lab2BGR);
+        Mat blur = new Mat();
+        Imgproc.GaussianBlur(source, blur, new Size(0, 0), 1.1);
+        Core.addWeighted(source, 1.10, blur, -0.10, 0, source);
+        release(lab, light, background, lightFloat, backgroundFloat, normalized, rawLight, blur);
+        return source;
+    }
+
+    public static Mat ecoLighten(Bitmap bitmap, float inkSaveLevel) {
+        inkSaveLevel = clamp(inkSaveLevel);
+        Mat source = prepare(bitmap, true, false);
+        Mat gray = extractLuminance(source);
+        Mat grayFloat = new Mat();
+        Mat mean = new Mat();
+        Mat squaredMean = new Mat();
+        Mat variance = new Mat();
+        Mat standardDeviation = new Mat();
+        Mat threshold = new Mat();
+        gray.convertTo(grayFloat, CvType.CV_32F);
+        int window = oddKernel(Math.min(source.cols(), source.rows()), 0.035 - inkSaveLevel * 0.015);
+        // Mean and squared mean give Sauvola's local standard deviation without Java loops.
+        Imgproc.boxFilter(grayFloat, mean, CvType.CV_32F, new Size(window, window));
+        Imgproc.sqrBoxFilter(grayFloat, squaredMean, CvType.CV_32F, new Size(window, window));
+        Core.multiply(mean, mean, variance);
+        Core.subtract(squaredMean, variance, variance);
+        Core.max(variance, new Scalar(0), variance);
+        Core.sqrt(variance, standardDeviation);
+        double k = 0.22 + inkSaveLevel * 0.16;
+        Mat contrastTerm = new Mat();
+        Core.multiply(standardDeviation, new Scalar(k / 128.0), contrastTerm);
+        Core.add(contrastTerm, new Scalar(1.0 - k), contrastTerm);
+        Core.multiply(mean, contrastTerm, threshold);
+        Mat binary = new Mat();
+        Core.compare(grayFloat, threshold, binary, Core.CMP_GT);
+        if (inkSaveLevel > 0.05f) {
+            Mat kernel = Mat.ones(3, 3, CvType.CV_8U);
+            Imgproc.dilate(binary, binary, kernel, new Point(-1, -1), inkSaveLevel > 0.65f ? 2 : 1);
+            kernel.release();
+        }
+        release(source, gray, grayFloat, mean, squaredMean, variance, standardDeviation, threshold, contrastTerm);
+        return binary;
+    }
+
+    private static Mat extractLuminance(Mat bgr) {
+        Mat lab = new Mat();
+        Mat luminance = new Mat();
+        Imgproc.cvtColor(bgr, lab, Imgproc.COLOR_BGR2Lab);
+        Core.extractChannel(lab, luminance, 0);
+        lab.release();
+        return luminance;
+    }
+
+    private static void boostLabChannel(Mat lab, int index, float boost) {
+        Mat channel = new Mat();
+        Mat centered = new Mat();
+        Mat magnitude = new Mat();
+        Mat denominator = new Mat();
+        Core.extractChannel(lab, channel, index);
+        channel.convertTo(centered, CvType.CV_32F);
+        Core.subtract(centered, new Scalar(128), centered);
+        Core.absdiff(centered, new Scalar(0), magnitude);
+        Core.multiply(magnitude, new Scalar(0.0025 * boost), denominator);
+        Core.add(denominator, new Scalar(1), denominator);
+        Core.divide(centered, denominator, centered);
+        Core.multiply(centered, new Scalar(1.0 + 0.65 * boost), centered);
+        Core.add(centered, new Scalar(128), centered);
+        centered.convertTo(channel, CvType.CV_8U);
+        Core.insertChannel(channel, lab, index);
+        release(channel, centered, magnitude, denominator);
+    }
+
+    private static int oddKernel(int dimension, double fraction) {
+        int value = Math.max(15, (int) Math.round(dimension * fraction));
+        return value % 2 == 0 ? value + 1 : value;
+    }
+
+    private static float clamp(float value) {
+        return Math.max(0.0f, Math.min(1.0f, value));
+    }
+
+    private static void release(Mat... mats) {
+        for (Mat mat : mats) mat.release();
     }
 
     private static Mat correctPerspective(Mat source) {
@@ -58,7 +206,7 @@ public final class DocumentImageProcessor {
             double perimeter = Imgproc.arcLength(points, true);
             MatOfPoint2f approximation = new MatOfPoint2f();
             Imgproc.approxPolyDP(points, approximation, perimeter * 0.02, true);
-            if (approximation.total() == 4 && area > imageArea * 0.55 && area > largestArea) {
+            if (approximation.total() == 4 && area > imageArea * 0.70 && area > largestArea) {
                 if (best != null) {
                     best.release();
                 }

@@ -4,11 +4,9 @@ import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
 
-import com.namangarg.androiddocumentscannerandfilter.Helper.DocumentImageProcessor;
-
 import org.opencv.android.Utils;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
-import org.opencv.imgproc.Imgproc;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -27,13 +25,10 @@ public class LightenFilter {
         executor.execute(new Runnable() {
             @Override
             public void run() {
-                Mat mat = DocumentImageProcessor.prepare(bitmap);
-                Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2Lab);
-                java.util.List<Mat> channels = new java.util.ArrayList<>();
-                org.opencv.core.Core.split(mat, channels);
-                channels.get(0).convertTo(channels.get(0), -1, 1.08, 8);
-                org.opencv.core.Core.merge(channels, mat);
-                Imgproc.cvtColor(mat, mat, Imgproc.COLOR_Lab2BGR);
+                Mat mat = new Mat(bitmap.getWidth(), bitmap.getHeight(), CvType.CV_8UC1);
+                Utils.bitmapToMat(bitmap,mat);
+                mat.convertTo(mat, -1,1,40);
+                // increases brightness by 40
                 final Bitmap result = Bitmap.createBitmap(mat.cols(),mat.rows(),Bitmap.Config.ARGB_8888);
                 Utils.matToBitmap(mat, result);
                 mat.release();
